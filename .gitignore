@@ -1,0 +1,7 @@
+backend_learning_env/
+__pycache__/
+*.pyc
+database.db
+.DS_Store
+*.egg-info/
+.env
