@@ -3,23 +3,27 @@
 ## Project Location
 /Users/amanparmar/Desktop/backend_learning
 
-## Run Command
+## GitHub Repo
+https://github.com/452aman/backend-learning
+
+## Live URL
+https://backend-learning-0l5e.onrender.com/docs
+
+## Run Locally
 ```bash
 cd /Users/amanparmar/Desktop/backend_learning
 source backend_learning_env/bin/activate
 backend_learning_env/bin/python3 -m uvicorn main:app --reload
 ```
 
-## Test API
-http://localhost:8000/docs
-
 ---
 
 ## Stack
 - Language: Python
 - Framework: FastAPI
-- Database: SQLite (file: database.db)
+- Database: PostgreSQL (local + Render)
 - ORM: SQLAlchemy
+- Migrations: Alembic
 - Auth: JWT (python-jose) + bcrypt (passlib)
 
 ## requirements.txt
@@ -31,6 +35,8 @@ python-jose
 passlib
 bcrypt==4.0.1
 python-multipart
+alembic
+psycopg2-binary
 ```
 
 ---
@@ -38,186 +44,14 @@ python-multipart
 ## Project Structure
 ```
 backend_learning/
-├── main.py          → API routes
-├── database.py      → DB connection setup
-├── models.py        → Table definitions (User + Todo)
-├── auth.py          → Password hashing + JWT
-├── database.db      → Actual SQLite database file
+├── main.py              → API routes
+├── database.py          → DB connection setup
+├── models.py            → Table definitions (User + Todo)
+├── auth.py              → Password hashing + JWT
+├── alembic/             → Migration files
+├── alembic.ini          → Alembic config
+├── requirements.txt
 └── backend_context.md
-```
-
----
-
-## File: database.py
-```python
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-DATABASE_URL = "sqlite:///./database.db"
-
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-
-SessionLocal = sessionmaker(bind=engine)
-
-Base = declarative_base()
-```
-
----
-
-## File: models.py
-```python
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
-from database import Base
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String)
-    email = Column(String, unique=True)
-    password = Column(String)
-
-class Todo(Base):
-    __tablename__ = "todos"
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String)
-    description = Column(String)
-    completed = Column(Boolean, default=False)
-    user_id = Column(Integer, ForeignKey("users.id"))
-```
-
----
-
-## File: auth.py
-```python
-from datetime import datetime, timedelta
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-
-SECRET_KEY = "mysecretkey123"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-def hash_password(password: str):
-    return pwd_context.hash(password)
-
-def verify_password(plain_password: str, hashed_password: str):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def create_token(data: dict):
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-
-def verify_token(token: str):
-    payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    return payload
-```
-
----
-
-## File: main.py
-```python
-from fastapi import FastAPI, Depends, HTTPException, Header
-from sqlalchemy.orm import Session
-from database import SessionLocal, engine
-import models
-import auth
-models.Base.metadata.create_all(bind=engine)
-
-app = FastAPI()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-from pydantic import BaseModel
-
-class UserCreate(BaseModel):
-    name: str
-    email: str
-    password: str
-
-class TodoCreate(BaseModel):
-    description: str
-    title: str
-
-class TodoUpdate(BaseModel):
-    description: str
-    title: str
-
-class UserLogin(BaseModel):
-    email: str
-    password: str
-
-@app.post("/signup")
-def signup(user: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(models.User).filter(models.User.email == user.email).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    hashed = auth.hash_password(user.password)
-    new_user = models.User(name=user.name, email=user.email, password=hashed)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return {"message": "Account created successfully"}
-
-@app.post("/login")
-def login(user: UserLogin, db: Session = Depends(get_db)):
-    db_user = db.query(models.User).filter(models.User.email == user.email).first()
-    if not db_user:
-        raise HTTPException(status_code=400, detail="Invalid email or password")
-    if not auth.verify_password(user.password, db_user.password):
-        raise HTTPException(status_code=400, detail="Invalid email or password")
-    token = auth.create_token({"user_id": db_user.id})
-    return {"access_token": token}
-
-@app.post("/todos")
-def post_todo(todo: TodoCreate, authorization: str = Header(...), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "")
-    payload = auth.verify_token(token)
-    user_id = payload.get("user_id")
-    new_todo = models.Todo(title=todo.title, description=todo.description, user_id=user_id)
-    db.add(new_todo)
-    db.commit()
-    db.refresh(new_todo)
-    return {"message": "Todo added"}
-
-@app.get("/get_todo")
-def get_todo(authorization: str = Header(...), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "")
-    payload = auth.verify_token(token)
-    user_id = payload.get("user_id")
-    todos = db.query(models.Todo).filter(models.Todo.user_id == user_id).all()
-    return todos
-
-@app.delete("/todos/{id}")
-def delete_todo(id: int, authorization: str = Header(...), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "")
-    payload = auth.verify_token(token)
-    user_id = payload.get("user_id")
-    todo = db.query(models.Todo).filter(models.Todo.user_id == user_id, models.Todo.id == id).first()
-    if not todo:
-        raise HTTPException(status_code=404, detail="Todo not Found")
-    db.delete(todo)
-    db.commit()
-    return {"message": "Todo Deleted"}
-
-@app.put("/todos/{id}")
-def update_todo(id: int, new_todo: TodoUpdate, authorization: str = Header(...), db: Session = Depends(get_db)):
-    token = authorization.replace("Bearer ", "")
-    payload = auth.verify_token(token)
-    user_id = payload.get("user_id")
-    todo = db.query(models.Todo).filter(models.Todo.id == id, models.Todo.user_id == user_id).first()
-    todo.title = new_todo.title
-    todo.description = new_todo.description
-    db.commit()
-    return {"message": "Todo Updated Successfully"}
 ```
 
 ---
@@ -242,7 +76,7 @@ db.delete(item); db.commit()                   # delete
 ```
 SIGNUP:  hash password → save to DB
 LOGIN:   verify password → create JWT token → return token
-PROTECTED ROUTE: read Authorization header → strip "Bearer " → verify token → get user_id
+PROTECTED ROUTE: read token → verify → get user_id → fetch data
 ```
 
 ### Filter with multiple conditions
@@ -251,26 +85,38 @@ db.query(Model).filter(Model.field1 == val1, Model.field2 == val2).first()
 # use comma, NOT 'and'
 ```
 
+### Alembic workflow
+```
+Change models.py
+→ alembic revision --autogenerate -m "description"
+→ alembic upgrade head
+```
+
 ### Error Handling
 ```python
 raise HTTPException(status_code=400, detail="message")
-# 400 = bad request
-# 404 = not found
-# 401 = unauthorized
+# 400 = bad request  |  404 = not found  |  401 = unauthorized
+```
+
+### Debugging steps
+```
+1. Look at the request URL    → what was sent wrong?
+2. Find YOUR file in traceback → where did it break?
+3. Read the last line          → what exactly broke?
 ```
 
 ---
 
 ## What's Been Built
-- POST /signup        → create account (with hashed password)
-- POST /login         → login and get JWT token
-- POST /todos         → create todo (Bearer token in header)
-- GET  /get_todo      → get all my todos (Bearer token in header)
-- PUT  /todos/{id}    → update a todo (Bearer token in header)
-- DELETE /todos/{id}  → delete a todo (Bearer token in header)
+- POST /signup        → create account (hashed password)
+- POST /login         → get JWT token
+- POST /todos         → create todo (token auth)
+- GET  /get_todo      → get all my todos (token auth)
+- PUT  /todos/{id}    → update a todo (token auth)
+- DELETE /todos/{id}  → delete a todo (token auth)
 
 ## What's Next
-- Fix curl 422 issue on login (investigate)
-- Alembic migrations (replace create_all)
-- Switch SQLite → PostgreSQL
-- Deployment on Render/Railway
+- Docker (containerize the app)
+- Proper OAuth2 Bearer token with Swagger support
+- Background tasks
+- Redis caching

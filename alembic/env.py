@@ -7,7 +7,7 @@ from alembic import context
 
 import sys                                                      
 sys.path.append("/Users/amanparmar/Desktop/backend_learning")                                             
-from models import Base 
+from app.models import Base 
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
